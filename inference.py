@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 FullTransNet Video Summarization Inference Script
-This script loads a trained model and performs inference on video data,
-showing both the original video timeline and the generated summary.
+Single script for Kaggle/Colab - loads trained model and shows video summarization results
 """
 
 import os
+import sys
 import logging
 import argparse
 import matplotlib.pyplot as plt
@@ -134,6 +134,7 @@ def load_video_data(dataset_path, video_name):
 def perform_inference(model, video_data, device):
     """Perform inference on the video data."""
     logger = logging.getLogger(__name__)
+    print(f"Starting inference with {len(video_data['seq'])} segments...")
     
     seq = torch.as_tensor(video_data['seq'], dtype=torch.float32).unsqueeze(0).to(device)
     gtscore = video_data['gtscore']
@@ -142,10 +143,14 @@ def perform_inference(model, video_data, device):
     nfps = video_data['nfps']
     picks = video_data['picks']
     
+    print(f"Video has {n_frames} frames and {len(cps)} segments")
+    
     # Get keyshot summary from ground truth
     keyshot_summ = vsumm_helper.get_keyshot_summ(gtscore, cps, n_frames, nfps, picks)
     target = vsumm_helper.downsample_summ(keyshot_summ)
     target1 = seq.squeeze(0)[target]
+    
+    print(f"Ground truth summary has {np.sum(keyshot_summ)} selected frames")
     
     # Prepare global indices
     global_idxa = cps[:, 0]
@@ -376,6 +381,8 @@ def print_summary_statistics(video_name, video_data, inference_results):
 
 def main():
     """Main inference function."""
+    print("Starting FullTransNet Video Summarization Inference...")
+    
     parser = argparse.ArgumentParser(description='Video Summarization Inference')
     
     # Model arguments
@@ -421,42 +428,56 @@ def main():
     
     # Load video data
     logger.info(f"Loading video data: {args.video_name} from {args.dataset_path}")
+    print(f"Loading video: {args.video_name}")
     video_data = load_video_data(args.dataset_path, args.video_name)
     if video_data is None:
         logger.error("Failed to load video data")
+        print("ERROR: Failed to load video data")
         return
+    print(f"✓ Video data loaded successfully")
     
     # Create model
     logger.info("Creating model...")
+    print("Creating model...")
     model = get_model(args.model, **vars(args))
     model = model.to(device)
+    print(f"✓ Model created and moved to {device}")
     
     # Load trained weights
     logger.info(f"Loading model weights from {args.model_path}")
+    print(f"Loading model weights from: {args.model_path}")
     try:
         state_dict = torch.load(args.model_path, map_location=device)
         model.load_state_dict(state_dict)
         logger.info("Model weights loaded successfully")
+        print("✓ Model weights loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load model weights: {e}")
+        print(f"ERROR: Failed to load model weights: {e}")
         return
     
     # Perform inference
     logger.info("Performing inference...")
+    print("Performing inference...")
     inference_results = perform_inference(model, video_data, device)
+    print("✓ Inference completed")
     
     # Print statistics
+    print("Generating summary statistics...")
     print_summary_statistics(args.video_name, video_data, inference_results)
     
     # Create visualization
     if not args.no_display:
         logger.info("Creating visualization...")
+        print("Creating visualization...")
         create_visualization(args.video_name, video_data, inference_results, args.save_plot)
     elif args.save_plot:
         logger.info("Creating and saving visualization...")
+        print("Creating and saving visualization...")
         create_visualization(args.video_name, video_data, inference_results, args.save_plot)
     
     logger.info("Inference completed successfully!")
+    print("🎉 All done! Inference completed successfully!")
 
 
 if __name__ == '__main__':
