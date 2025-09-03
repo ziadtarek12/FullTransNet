@@ -313,9 +313,9 @@ def print_frame_details(video_data, results, fps=30):
 
 
 def save_frame_data(video_name, video_data, results, selected_frames, frame_ranges, save_path, fps=30):
-    """Save frame extraction data to JSON file."""
+    """Save frame extraction data to JSON file with proper type conversion."""
     
-    # Calculate time ranges
+    # Calculate time ranges with proper type conversion
     time_ranges = []
     for start, end in frame_ranges:
         time_ranges.append({
@@ -326,7 +326,7 @@ def save_frame_data(video_name, video_data, results, selected_frames, frame_rang
             'duration': float((end - start + 1) / fps)
         })
     
-    # Create comprehensive data structure
+    # Create comprehensive data structure with type conversion
     frame_data = {
         'video_info': {
             'video_name': str(video_name),
@@ -353,7 +353,6 @@ def save_frame_data(video_name, video_data, results, selected_frames, frame_rang
     
     # Generate FFmpeg commands for video extraction
     ffmpeg_segments = []
-    filter_inputs = []
     
     for i, time_range in enumerate(time_ranges):
         start_time = time_range['start_time']
@@ -362,16 +361,14 @@ def save_frame_data(video_name, video_data, results, selected_frames, frame_rang
         # Individual segment extraction command
         segment_cmd = f"ffmpeg -i input_video.mp4 -ss {start_time:.2f} -t {duration:.2f} -c copy segment_{i+1}.mp4"
         ffmpeg_segments.append(segment_cmd)
-        filter_inputs.append(f"[{i}:v] [{i}:a]")
     
     frame_data['ffmpeg_commands']['individual_segments'] = ffmpeg_segments
     
     # Create concat filter for combining all segments
-    if len(filter_inputs) > 0:
-        inputs_str = " ".join([f"-i segment_{i+1}.mp4" for i in range(len(filter_inputs))])
-        concat_filter = f"ffmpeg {inputs_str} -filter_complex "" + 
-                       "".join([f"[{i}:v] [{i}:a]" for i in range(len(filter_inputs))]) + 
-                       f" concat=n={len(filter_inputs)}:v=1:a=1 [v] [a]" -map "[v]" -map "[a]" summary_video.mp4"
+    if len(ffmpeg_segments) > 0:
+        inputs_str = " ".join([f"-i segment_{i+1}.mp4" for i in range(len(ffmpeg_segments))])
+        filter_complex = "".join([f"[{i}:v] [{i}:a]" for i in range(len(ffmpeg_segments))])
+        concat_filter = f"ffmpeg {inputs_str} -filter_complex \"{filter_complex} concat=n={len(ffmpeg_segments)}:v=1:a=1 [v] [a]\" -map \"[v]\" -map \"[a]\" summary_video.mp4"
         frame_data['ffmpeg_commands']['concat_filter'] = concat_filter
     
     # Save to JSON file
@@ -379,8 +376,7 @@ def save_frame_data(video_name, video_data, results, selected_frames, frame_rang
     with open(save_path, 'w') as f:
         json.dump(frame_data, f, indent=2)
     
-    print(f"
-✓ Frame data saved to: {save_path}")
+    print(f"\n✓ Frame data saved to: {save_path}")
     print(f"✓ File contains: frame indices, time ranges, and FFmpeg commands")
     
     return frame_data
