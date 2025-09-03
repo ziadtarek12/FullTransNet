@@ -318,27 +318,36 @@ def example_tvsum():
 
 
 if __name__ == '__main__':
-    # Direct execution - run example
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='FullTransNet Video Summarization Inference')
+    parser.add_argument('--model-path', type=str, required=True,
+                       help='Path to the trained model checkpoint (e.g., ./model_save/summe/summe_0.pt)')
+    parser.add_argument('--dataset-path', type=str, required=True,
+                       help='Path to the HDF5 dataset file (e.g., ./datasets/eccv16_dataset_summe_google_pool5.h5)')
+    parser.add_argument('--video-name', type=str, required=True,
+                       help='Name of the video in the dataset (e.g., video_1)')
+    parser.add_argument('--save-plot', type=str, default=None,
+                       help='Path to save the visualization plot (e.g., ./results/video_1_summary.png)')
+    parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'],
+                       help='Device to use for inference (default: cuda)')
+    
+    args = parser.parse_args()
+    
     print("Running FullTransNet Video Summarization Inference...")
-    print("Make sure you have the model and dataset files in the correct paths!")
-    
-    # You can modify these paths as needed
-    MODEL_PATH = './model_save/summe/summe_0.pt'
-    DATASET_PATH = './datasets/eccv16_dataset_summe_google_pool5.h5'
-    VIDEO_NAME = 'video_1'
-    SAVE_PATH = './results/video_1_summary.png'
-    
-    print(f"Model: {MODEL_PATH}")
-    print(f"Dataset: {DATASET_PATH}")
-    print(f"Video: {VIDEO_NAME}")
-    print(f"Save plot: {SAVE_PATH}")
+    print(f"Model: {args.model_path}")
+    print(f"Dataset: {args.dataset_path}")
+    print(f"Video: {args.video_name}")
+    print(f"Save plot: {args.save_plot}")
+    print(f"Device: {args.device}")
     
     # Run the inference
     video_data, results, fig = run_inference(
-        model_path=MODEL_PATH,
-        dataset_path=DATASET_PATH,
-        video_name=VIDEO_NAME,
-        save_plot=SAVE_PATH
+        model_path=args.model_path,
+        dataset_path=args.dataset_path,
+        video_name=args.video_name,
+        save_plot=args.save_plot,
+        device=args.device
     )
     
     if video_data is not None:
