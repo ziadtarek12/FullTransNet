@@ -310,8 +310,21 @@ def create_visualization(video_name, video_data, inference_results, save_path=No
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        # Create directory if it doesn't exist
+        from pathlib import Path
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the figure
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', format='png')
         logger.info(f"Visualization saved to {save_path}")
+        print(f"✓ PNG file saved successfully: {save_path}")
+        
+        # Verify file exists
+        if Path(save_path).exists():
+            file_size = Path(save_path).stat().st_size / 1024  # Size in KB
+            print(f"✓ File size: {file_size:.1f} KB")
+        else:
+            print(f"✗ Error: File was not saved to {save_path}")
     
     plt.show()
     
