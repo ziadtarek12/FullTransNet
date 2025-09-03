@@ -12,6 +12,7 @@ import h5py
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from pathlib import Path
+import json
 
 # Import project modules
 from helpers import data_helper, vsumm_helper
@@ -246,7 +247,145 @@ def print_summary_stats(video_name, video_data, results):
     print("="*60)
 
 
-def run_inference(model_path, dataset_path, video_name, save_plot=None, device='cuda'):
+def get_summary_frames(results):
+    """Extract exact frame indices for video summary."""
+    
+    # Get the binary summary (1 = include, 0 = exclude)
+    summary_binary = results['keyshot_pred']
+    
+    # Get frame indices where summary_binary == 1
+    selected_frames = np.where(summary_binary == 1)[0]
+    
+    # Convert to frame ranges for easier processing
+    frame_ranges = []
+    if len(selected_frames) > 0:
+        start = selected_frames[0]
+        
+        for i in range(1, len(selected_frames)):
+            # Check if this is the end of a continuous segment
+            if selected_frames[i] != selected_frames[i-1] + 1:
+                frame_ranges.append((start, selected_frames[i-1]))
+                start = selected_frames[i]
+        
+        # Add the final range
+        frame_ranges.append((start, selected_frames[-1]))
+    
+    return selected_frames.tolist(), frame_ranges
+
+
+def print_frame_details(video_data, results, fps=30):
+    """Print detailed frame information."""
+    selected_frames, frame_ranges = get_summary_frames(results)
+    
+    print(f"\n{'='*60}")
+    print("DETAILED FRAME EXTRACTION")
+    print(f"{'='*60}")
+    
+    print(f"Total selected frames: {len(selected_frames)}")
+    print(f"Number of segments: {len(frame_ranges)}")
+    
+    print(f"\nFrame Ranges (start, end):")
+    for i, (start, end) in enumerate(frame_ranges):
+        duration = end - start + 1
+        print(f"  Segment {i+1}: frames {start}-{end} ({duration} frames)")
+    
+    print(f"\nFirst 20 selected frames: {selected_frames[:20]}")
+    if len(selected_frames) > 20:
+        print(f"... and {len(selected_frames) - 20} more frames")
+    
+    # Time ranges
+    print(f"\nTime Ranges (assuming {fps} FPS):")
+    total_summary_duration = 0
+    for i, (start, end) in enumerate(frame_ranges):
+        start_time = start / fps
+        end_time = end / fps
+        duration = (end - start + 1) / fps
+        total_summary_duration += duration
+        print(f"  Segment {i+1}: {start_time:.2f}s - {end_time:.2f}s ({duration:.2f}s)")
+    
+    original_duration = video_data['n_frames'] / fps
+    print(f"\nSummary Duration: {total_summary_duration:.2f}s")
+    print(f"Original Duration: {original_duration:.2f}s")
+    print(f"Time Compression: {(1 - total_summary_duration/original_duration)*100:.1f}%")
+    print(f"{'='*60}")
+    
+    return selected_frames, frame_ranges
+
+
+def save_frame_data(video_name, video_data, results, selected_frames, frame_ranges, save_path, fps=30):
+    """Save frame extraction data to JSON file."""
+    
+    # Calculate time ranges
+    time_ranges = []
+    for start, end in frame_ranges:
+        time_ranges.append({
+            'start_frame': start,
+            'end_frame': end,
+            'start_time': start / fps,
+            'end_time': end / fps,
+            'duration': (end - start + 1) / fps
+        })
+    
+    # Create comprehensive data structure
+    frame_data = {
+        'video_info': {
+            'video_name': video_name,
+            'total_frames': int(video_data['n_frames']),
+            'fps': fps,
+            'total_duration': video_data['n_frames'] / fps
+        },
+        'summary_info': {
+            'selected_frames_count': len(selected_frames),
+            'compression_ratio': (1 - len(selected_frames) / video_data['n_frames']) * 100,
+            'summary_duration': sum([(end - start + 1) / fps for start, end in frame_ranges]),
+            'f1_score': float(vsumm_helper.f1_score(results['keyshot_pred'], results['keyshot_gt']))
+        },
+        'frame_extraction': {
+            'selected_frames': selected_frames,
+            'frame_ranges': frame_ranges,
+            'time_ranges': time_ranges
+        },
+        'ffmpeg_commands': {
+            'individual_segments': [],
+            'concat_filter': ""
+        }
+    }
+    
+    # Generate FFmpeg commands for video extraction
+    ffmpeg_segments = []
+    filter_inputs = []
+    
+    for i, time_range in enumerate(time_ranges):
+        start_time = time_range['start_time']
+        duration = time_range['duration']
+        
+        # Individual segment extraction command
+        segment_cmd = f"ffmpeg -i input_video.mp4 -ss {start_time:.2f} -t {duration:.2f} -c copy segment_{i+1}.mp4"
+        ffmpeg_segments.append(segment_cmd)
+        filter_inputs.append(f"[{i}:v] [{i}:a]")
+    
+    frame_data['ffmpeg_commands']['individual_segments'] = ffmpeg_segments
+    
+    # Create concat filter for combining all segments
+    if len(filter_inputs) > 0:
+        inputs_str = " ".join([f"-i segment_{i+1}.mp4" for i in range(len(filter_inputs))])
+        concat_filter = f"ffmpeg {inputs_str} -filter_complex \"" + \
+                       "".join([f"[{i}:v] [{i}:a]" for i in range(len(filter_inputs))]) + \
+                       f" concat=n={len(filter_inputs)}:v=1:a=1 [v] [a]\" -map \"[v]\" -map \"[a]\" summary_video.mp4"
+        frame_data['ffmpeg_commands']['concat_filter'] = concat_filter
+    
+    # Save to JSON file
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, 'w') as f:
+        json.dump(frame_data, f, indent=2)
+    
+    print(f"\n✓ Frame data saved to: {save_path}")
+    print(f"✓ File contains: frame indices, time ranges, and FFmpeg commands")
+    
+    return frame_data
+
+
+def run_inference(model_path, dataset_path, video_name, save_plot=None, save_frames=None, fps=30, device='cuda'):
     """Main inference function - USE THIS IN KAGGLE/COLAB"""
     
     print("="*60)
@@ -281,19 +420,29 @@ def run_inference(model_path, dataset_path, video_name, save_plot=None, device='
         # Print statistics
         print_summary_stats(video_name, video_data, results)
         
+        # Extract and print frame details
+        print(f"\nExtracting frame details...")
+        selected_frames, frame_ranges = print_frame_details(video_data, results, fps)
+        
         # Create visualization
         print(f"\nCreating visualization...")
         fig = visualize_summary(video_name, video_data, results, save_plot)
         
+        # Save frame data if requested
+        frame_data = None
+        if save_frames:
+            print(f"\nSaving frame extraction data...")
+            frame_data = save_frame_data(video_name, video_data, results, selected_frames, frame_ranges, save_frames, fps)
+        
         print("\n✓ Inference completed successfully!")
         
-        return video_data, results, fig
+        return video_data, results, fig, selected_frames, frame_ranges, frame_data
         
     except Exception as e:
         print(f"\n✗ Error during inference: {str(e)}")
         import traceback
         traceback.print_exc()
-        return None, None, None
+        return None, None, None, None, None, None
 
 
 # KAGGLE/COLAB USAGE EXAMPLES:
@@ -304,7 +453,8 @@ def example_summe():
         model_path='./model_save/summe/summe_0.pt',
         dataset_path='./datasets/eccv16_dataset_summe_google_pool5.h5',
         video_name='video_1',
-        save_plot='./results/summe_video_1.png'
+        save_plot='./results/summe_video_1.png',
+        save_frames='./results/summe_video_1_frames.json'
     )
 
 def example_tvsum():
@@ -313,7 +463,8 @@ def example_tvsum():
         model_path='./model_save/tvsum/tvsum_0.pt', 
         dataset_path='./datasets/eccv16_dataset_tvsum_google_pool5.h5',
         video_name='video_1',
-        save_plot='./results/tvsum_video_1.png'
+        save_plot='./results/tvsum_video_1.png',
+        save_frames='./results/tvsum_video_1_frames.json'
     )
 
 
@@ -329,6 +480,10 @@ if __name__ == '__main__':
                        help='Name of the video in the dataset (e.g., video_1)')
     parser.add_argument('--save-plot', type=str, default=None,
                        help='Path to save the visualization plot (e.g., ./results/video_1_summary.png)')
+    parser.add_argument('--save-frames', type=str, default=None,
+                       help='Path to save frame extraction data as JSON (e.g., ./results/video_1_frames.json)')
+    parser.add_argument('--fps', type=int, default=30,
+                       help='Frames per second for time calculations (default: 30)')
     parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'],
                        help='Device to use for inference (default: cuda)')
     
@@ -339,19 +494,31 @@ if __name__ == '__main__':
     print(f"Dataset: {args.dataset_path}")
     print(f"Video: {args.video_name}")
     print(f"Save plot: {args.save_plot}")
+    print(f"Save frames: {args.save_frames}")
+    print(f"FPS: {args.fps}")
     print(f"Device: {args.device}")
     
     # Run the inference
-    video_data, results, fig = run_inference(
+    video_data, results, fig, selected_frames, frame_ranges, frame_data = run_inference(
         model_path=args.model_path,
         dataset_path=args.dataset_path,
         video_name=args.video_name,
         save_plot=args.save_plot,
+        save_frames=args.save_frames,
+        fps=args.fps,
         device=args.device
     )
     
     if video_data is not None:
         print("\n🎉 Inference completed successfully!")
-        print("Check the results above and the saved PNG file.")
+        print("Check the results above and the saved files.")
+        
+        if args.save_frames and frame_data:
+            print(f"\n📄 Frame extraction data saved to: {args.save_frames}")
+            print("This file contains:")
+            print("  - Exact frame indices")
+            print("  - Frame ranges") 
+            print("  - Time ranges")
+            print("  - FFmpeg commands for video extraction")
     else:
         print("\n❌ Inference failed. Check the error messages above.")
