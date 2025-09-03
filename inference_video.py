@@ -257,33 +257,48 @@ def create_demo_video(frame_ranges, output_path, fps=30, width=640, height=480):
     
     print(f"Creating demo video with {len(frame_ranges)} segments...")
     
-    # Create a video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
-    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
-    
-    for seg_idx, (start, end) in enumerate(frame_ranges):
-        color = colors[seg_idx % len(colors)]
-        duration_frames = end - start + 1
+    try:
+        # Create a video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        for frame_idx in range(duration_frames):
-            # Create a colored frame
+        if not out.isOpened():
+            print("Failed to create video writer. Creating segment info file instead.")
+            create_segment_info_file(frame_ranges, output_path.replace('.mp4', '_segments.txt'), fps)
+            return
+        
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
+        
+        for seg_idx, (start, end) in enumerate(frame_ranges):
+            color = colors[seg_idx % len(colors)]
+            duration_frames = max(1, int((end - start + 1) * fps / 30))  # Convert to output fps
+            
+            # Create a colored frame for this segment
             frame = np.zeros((height, width, 3), dtype=np.uint8)
             frame[:, :] = color
             
-            # Add text overlay
-            text = f"Segment {seg_idx + 1}"
-            time_text = f"Frame {start + frame_idx}"
+            # Add text overlay (only if OpenCV text functions work)
+            try:
+                text = f"Segment {seg_idx + 1}"
+                time_text = f"Frames {start}-{end}"
+                cv2.putText(frame, text, (50, height//2 - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                cv2.putText(frame, time_text, (50, height//2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            except:
+                # Text overlay failed, continue without text
+                pass
             
-            cv2.putText(frame, text, (50, height//2 - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.putText(frame, time_text, (50, height//2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            
-            out.write(frame)
-    
-    out.release()
-    cv2.destroyAllWindows()
-    print(f"✓ Demo video created: {output_path}")
+            # Write frames for this segment
+            for _ in range(duration_frames):
+                out.write(frame)
+        
+        out.release()
+        # Remove the problematic cv2.destroyAllWindows() call for Kaggle compatibility
+        print(f"✓ Demo video created: {output_path}")
+        
+    except Exception as e:
+        print(f"Error creating demo video: {e}")
+        print("Creating segment info file instead.")
+        create_segment_info_file(frame_ranges, output_path.replace('.mp4', '_segments.txt'), fps)
 
 
 def create_segment_info_file(frame_ranges, output_path, fps=30):
